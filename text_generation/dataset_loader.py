@@ -24,6 +24,7 @@ class Vocab(object):
         logger.info("Building word dict.")
         self.word_dict=dict((word,i) for i,word in enum)
         logger.info("Building reverse dict.")
+        enum=enumerate(self.vocab)
         self.rev_dict=dict((i,word) for i,word in enum)
 
     def update(self,new_set):
@@ -41,9 +42,9 @@ class Vocab(object):
         return list(map(lambda x:self.encode(x),dataset))
 
 
-DATA_DIR="/home/adityas/nltk_data/corpora/gutenberg/"
+DATA_DIR="/home/adityas/nltk_data/corpora/state_union/"
 
-files=os.listdir(DATA_DIR)[:1]
+files=os.listdir(DATA_DIR)
 logger.info("Data files are {}".format(", ".join(files)))
 files=map(lambda x:DATA_DIR+x,files)
 
@@ -68,5 +69,6 @@ for _file in files:
 vocab.create_index()
 logger.info("Done building dataset. Pickling stuff.")
 obj_file["word_dict"]=vocab.word_dict
+obj_file["rev_dict"]=vocab.rev_dict
 obj_file["raw_data"]=raw_dataset
 obj_file.close()
