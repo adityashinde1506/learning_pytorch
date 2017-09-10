@@ -67,6 +67,6 @@ for _file in files:
 
 vocab.create_index()
 logger.info("Done building dataset. Pickling stuff.")
-obj_file["vocab"]=vocab
+obj_file["word_dict"]=vocab.word_dict
 obj_file["raw_data"]=raw_dataset
 obj_file.close()
