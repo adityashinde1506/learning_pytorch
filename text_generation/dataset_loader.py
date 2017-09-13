@@ -57,18 +57,20 @@ for _file in files:
     logger.info("Reading {}".format(_file))
     try:
         _file_ptr=open(_file,encoding="ASCII")
-        raw_text=re.sub(r"[\s\(\)\[\]]+"," ",_file_ptr.read().lower())
-        sentences=re.split(SPLIT_PATTERN,raw_text)
-        logger.info("Splitting {} into words.".format(_file))
-        words=reduce(lambda x,y:x+y,map(lambda x:re.findall(r"\w+",x)+["<EOS>"],sentences))
-        vocab.update(set(words))
-        raw_dataset+=words
+        #raw_text=re.sub(r"[\s\(\)\[\]]+"," ",_file_ptr.read().lower())
+        #sentences=re.split(SPLIT_PATTERN,raw_text)
+        #logger.info("Splitting {} into words.".format(_file))
+        #words=reduce(lambda x,y:x+y,map(lambda x:re.findall(r"\w+",x)+["<EOS>"],sentences))
+        text=_file_ptr.read()
+        vocab.update(set(text))
+        raw_dataset+=text
     except Exception as e:
         logger.error("Could not read {}! Reason: {}".format(_file,e))
 
 vocab.create_index()
 logger.info("Done building dataset. Pickling stuff.")
-obj_file["word_dict"]=vocab.word_dict
-obj_file["rev_dict"]=vocab.rev_dict
-obj_file["raw_data"]=raw_dataset
+print(raw_dataset)
+#obj_file["word_dict"]=vocab.word_dict
+#obj_file["rev_dict"]=vocab.rev_dict
+#obj_file["raw_data"]=raw_dataset
 obj_file.close()

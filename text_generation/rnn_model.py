@@ -9,6 +9,8 @@ import torch.nn.functional as F
 
 import logging
 
+import sys
+
 logging.basicConfig(level=logging.DEBUG)
 
 logger=logging.getLogger(__name__)
@@ -25,93 +27,82 @@ class Dataset(object):
         return list(map(lambda x:self.vocab[x],self.raw_data))
 
     def get_dataset(self):
-        encoded_data=self.__encode_dataset()
-        dataset=[]
-        for i in range(0,len(encoded_data)-20):
-            frame=encoded_data[i:i+20]
-            dataset.append(frame)
-        dataset=numpy.array(dataset)
-        X,y=numpy.split(dataset,[dataset.shape[1]-1],axis=1)
-        return X,y
+        encoded_data=numpy.array(self.__encode_dataset()[:-483]).reshape((1000,-1))
+        return encoded_data
+        
+
+def one_hot_encode(indices,array):
+    for i in range(array.shape[0]):
+        array[i][indices[i]]=1
+    return array
 
 class LSTMWriter(N.Module):
-
-    def __init__(self,vocab_size,embd_size,hidden_dim,num_hidden_layers,word_dict):
+    
+    def __init__(self,vocab_size,n_layers=1):
         super(LSTMWriter,self).__init__()
-        self.word_dict=word_dict
         self.vocab_size=vocab_size
-        self.num_hidden_layers=num_hidden_layers
-        self.hidden_dim=hidden_dim
-        # Build LSTM layers.
-        self.lstm=N.LSTM(input_size=embd_size,hidden_size=hidden_dim,num_layers=num_hidden_layers,batch_first=True)
-        # Build word emneddings.
-        self.word_embd=N.Embedding(vocab_size,embd_size)
-        self.word_predictor=N.Linear(hidden_dim,vocab_size)
-        self.hidden=self.init_hidden(num_hidden_layers,hidden_dim,1000)
-        self.loss=N.NLLLoss()
-        self.optimizer=O.Adam(self.parameters())
+        self.n_layers=n_layers
+        self.embedding=N.Embedding(self.vocab_size,30)
+        self.lstm=N.GRU(30,30,n_layers,batch_first=True)
+        self.dropout=N.Dropout(0.1)
+        self.linear=N.Linear(30,self.vocab_size)
+        self.relu=N.ReLU()
+        self.linear2=N.Linear(self.vocab_size,self.vocab_size)
+        self.softmax=N.Softmax()
 
-    def init_hidden(self,num_layers,hidden_dim,batch_size):
-        return (A.Variable(torch.zeros(num_layers,batch_size,hidden_dim)),A.Variable(torch.zeros(num_layers,batch_size,hidden_dim)))
+    def init_hidden(self,batch_size=1):
+        h=A.Variable(torch.zeros(self.n_layers,batch_size,30))
+        c=A.Variable(torch.zeros(self.n_layers,batch_size,10))
+        return h
+        
+    def forward(self,sequence,hidden):
+        embedding=self.embedding(sequence)
+        recurrent=embedding
+        #for i in range(self.n_layers):
+        recurrent,hidden=self.lstm(recurrent,hidden)
+        flat=self.linear(recurrent.contiguous().view(recurrent.size(0)*recurrent.size(1),recurrent.size(2)))
+        #flat=self.softmax(flattened)
+        #flattened=recurrent[:,-1]
+        #flat=self.linear(flattened)
+        flat=self.linear2(self.dropout(self.relu(flat)))
+        flat=flat.view(recurrent.size(0),recurrent.size(1),flat.size(1))
+        return flat,hidden
 
-    def forward(self,sequence):
-        batch_size=sequence.size(0)
-        embeddings=self.word_embd(sequence)
-        lstm_out,self.hidden=self.lstm(embeddings,self.hidden)
-        flattened=self.word_predictor(lstm_out[:,-1])
-        predicted_word=F.log_softmax(flattened)
-        return predicted_word
+def get_batches(data):
+    i=0
+    while 1:
+        if i+11>=data.shape[1]:
+            break
+        train_X=data[:,i:i+50]
+        train_y=data[:,i+1:i+50+1]
+        yield train_X,train_y.squeeze()
+#        print((i,X.shape[0]))
+        i+=1
 
-    def partial_fit(self,X,y):
-        self.zero_grad()
-        self.hidden=self.init_hidden(self.num_hidden_layers,self.hidden_dim,X.size(0))
-        out=self.forward(X)
-        loss=self.loss(out,y)
-        loss.backward()
-        self.optimizer.step()
-        return loss
-
-    def predict(self,X):
-        self.hidden=self.init_hidden(self.num_hidden_layers,self.hidden_dim,1)
-        prediction=self.forward(A.Variable(torch.LongTensor(numpy.array([X]))))
-        #print("Start")
-        #print(prediction.div(10.0).exp().data[0])
-        #print(prediction.exp().data[0])
-        #print(prediction.div(0.1).exp().data[0])
-        return torch.multinomial(prediction.div(0.5).exp(),1)[0].data[0]
-        #return prediction.max(1)[1].data[0]
-
-    def get_batch(self,X,y):
-        dataset=numpy.hstack((X,y))
-        numpy.random.shuffle(dataset)
-        i=0
-        while 1:
-            batch=dataset[i:i+1000]
-            if batch.shape[0]!=1000:
-                i=0
-                batch=numpy.vstack((batch,dataset[i:1000-batch.shape[0]]))
-            train,target=numpy.split(batch,[batch.shape[1]-1],axis=1)
-            yield A.Variable(torch.LongTensor(train)),A.Variable(torch.LongTensor(target).contiguous().view(-1))
-            i+=1000
-
-    def generate_text(self,seed,len_=100):
-        gen_str=" ".join(list(map(lambda x:self.word_dict[x],seed)))
-        for i in range(len_):
-            prediction=self.predict(seed)
-            seed=numpy.append(seed,prediction)
-            seed=seed[1:]
-            gen_str+=" "+self.word_dict[prediction]
-        for line in gen_str.split("<EOS>"):
-            print(line)
-
-    def fit(self,X,y):
-        generator=self.get_batch(X,y)
-        for i in range(200):
-            train,target=next(generator)
-            loss=self.partial_fit(train,target)
-            logging.info("Epoch: {} Training Loss: {}".format(i,loss.data[0]))
-            #if i % 10 ==0 and i!=0:
-             #   self.generate_text(X[10])
+def generate_text(X,model):
+    fp=open("generated_text","a")
+    print("Priming the network.")
+    hidden=model.init_hidden(1)
+    i =0
+    while (i+50) < X.shape[0]:
+        #print("Priming for {}".format(i))
+        input_=numpy.array([X[i:i+50]])
+        _,hidden=model.forward(A.Variable(torch.from_numpy(input_)),hidden)
+        i+=1
+    gen_str=""
+    print("Network primed")
+    for i in range(5000):
+        out,hidden=model.forward(A.Variable(torch.from_numpy(input_)),hidden)
+        out=out[:,-1].exp().data
+        #print(out)
+        #sys.exit()
+        char=torch.multinomial(out,1)[0][0]
+        fp.write(rev_dict[char])
+        fp.flush()
+        input_=numpy.append(input_.squeeze(),char)
+        input_=numpy.array([input_[1:]],dtype=numpy.long)
+    fp.flush()
+    fp.close()
 
 if __name__=="__main__":
     dataset=Dataset(storage["raw_data"],storage["word_dict"])
@@ -119,8 +110,38 @@ if __name__=="__main__":
     word_dict=storage["word_dict"]
     rev_dict=storage["rev_dict"]
     del storage
-    X,y=dataset.get_dataset()
-    model=LSTMWriter(vocab_size,30,20,2,rev_dict)
-    model.generate_text(X[3],1000)
-    model.fit(X,y)
-    model.generate_text(X[3],1000)
+    data=dataset.get_dataset()
+    loss_fn=N.CrossEntropyLoss()
+    seed=data[0][3:300]
+
+    model=LSTMWriter(vocab_size,2)
+    optimizer=O.Adam(model.parameters(),lr=0.1)
+
+    for i in range(20):
+        hidden=model.init_hidden(1000)
+        batch_generator=get_batches(data[:,:10000])
+        total_loss=0
+        b=1
+        while b:
+            model.zero_grad()
+            try:
+                _X,_y=next(batch_generator)
+            except:
+                break
+            train=A.Variable(torch.from_numpy(_X))
+            targets=A.Variable(torch.from_numpy(_y).contiguous().view(-1))
+            out,hidden=model.forward(train,A.Variable(hidden.data))
+            loss=loss_fn(out.contiguous().view(-1,vocab_size),targets)
+            loss.backward()
+            optimizer.step()
+            total_loss+=loss.data[0]
+            #del data
+            #del train
+            #del targets
+            #generate_text(seed,model)
+            if b % 100 ==0:
+                logging.info("Epoch :{} Batches :{} Loss :{}".format(i,b,total_loss))
+                total_loss=0
+            b+=1
+    del data
+    generate_text(seed,model)
