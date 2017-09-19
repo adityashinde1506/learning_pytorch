@@ -10,12 +10,15 @@ import torch.nn.functional as F
 import logging
 
 import sys
+from generate import *
 
 logging.basicConfig(level=logging.DEBUG)
 
 logger=logging.getLogger(__name__)
 
 storage=shelve.open("data.bin")
+
+SEQ_LEN=200
 
 class Dataset(object):
 
@@ -27,7 +30,7 @@ class Dataset(object):
         return list(map(lambda x:self.vocab[x],self.raw_data))
 
     def get_dataset(self):
-        encoded_data=numpy.array(self.__encode_dataset()[:-483]).reshape((1000,-1))
+        encoded_data=numpy.array(self.__encode_dataset())
         return encoded_data
         
 
@@ -43,66 +46,56 @@ class LSTMWriter(N.Module):
         self.vocab_size=vocab_size
         self.n_layers=n_layers
         self.embedding=N.Embedding(self.vocab_size,30)
-        self.lstm=N.GRU(30,30,n_layers,batch_first=True)
-        self.dropout=N.Dropout(0.1)
-        self.linear=N.Linear(30,self.vocab_size)
-        self.relu=N.ReLU()
-        self.linear2=N.Linear(self.vocab_size,self.vocab_size)
-        self.softmax=N.Softmax()
+        self.lstm=N.GRU(30,100,n_layers,batch_first=True)
+        self.linear=N.Linear(100,self.vocab_size)
+        self.softmax=N.Sigmoid()
+        self.init_weights()
 
     def init_hidden(self,batch_size=1):
-        h=A.Variable(torch.zeros(self.n_layers,batch_size,30))
-        c=A.Variable(torch.zeros(self.n_layers,batch_size,10))
+        h=A.Variable(torch.zeros(self.n_layers,batch_size,100))
+        c=A.Variable(torch.zeros(self.n_layers,batch_size,200))
         return h
+
+    def init_weights(self):
+        self.linear.weight.data.uniform_(-0.01,0.01)
         
     def forward(self,sequence,hidden):
-        embedding=self.embedding(sequence)
+        embedding=self.embedding(sequence.view(1,-1))
         recurrent=embedding
-        #for i in range(self.n_layers):
-        recurrent,hidden=self.lstm(recurrent,hidden)
-        flat=self.linear(recurrent.contiguous().view(recurrent.size(0)*recurrent.size(1),recurrent.size(2)))
-        #flat=self.softmax(flattened)
+        recurrent,hidden=self.lstm(recurrent.view(1,1,-1),hidden)
+        flat=recurrent
+        #flat=self.relu(flat)
+        flat=self.linear(flat.view(1,-1))
+        #flat=self.softmax(flat.view(1,-1))
         #flattened=recurrent[:,-1]
         #flat=self.linear(flattened)
-        flat=self.linear2(self.dropout(self.relu(flat)))
-        flat=flat.view(recurrent.size(0),recurrent.size(1),flat.size(1))
+        #print(flat.sum())
         return flat,hidden
 
 def get_batches(data):
     i=0
     while 1:
-        if i+11>=data.shape[1]:
+        if i+SEQ_LEN+1>=data.shape[0]:
             break
-        train_X=data[:,i:i+50]
-        train_y=data[:,i+1:i+50+1]
-        yield train_X,train_y.squeeze()
+        train_X=data[i:i+SEQ_LEN]
+        train_y=data[i+1:i+SEQ_LEN+1]
+        yield numpy.array([train_X]),numpy.array([train_y])
 #        print((i,X.shape[0]))
         i+=1
 
-def generate_text(X,model):
-    fp=open("generated_text","a")
-    print("Priming the network.")
+def train_on_sequence(model,inp,target):
+    loss=0
+    model.zero_grad()
     hidden=model.init_hidden(1)
-    i =0
-    while (i+50) < X.shape[0]:
-        #print("Priming for {}".format(i))
-        input_=numpy.array([X[i:i+50]])
-        _,hidden=model.forward(A.Variable(torch.from_numpy(input_)),hidden)
-        i+=1
-    gen_str=""
-    print("Network primed")
-    for i in range(5000):
-        out,hidden=model.forward(A.Variable(torch.from_numpy(input_)),hidden)
-        out=out[:,-1].exp().data
-        #print(out)
-        #sys.exit()
-        char=torch.multinomial(out,1)[0][0]
-        fp.write(rev_dict[char])
-        fp.flush()
-        input_=numpy.append(input_.squeeze(),char)
-        input_=numpy.array([input_[1:]],dtype=numpy.long)
-    fp.flush()
-    fp.close()
+    for i in range(inp.shape[1]):
+        train=A.Variable(torch.from_numpy(inp[:,i]))
+        targets=A.Variable(torch.from_numpy(target[:,i]).contiguous().view(-1))
+        out,hidden=model.forward(train,A.Variable(hidden.data))
+        loss+=loss_fn(out,targets)
+    loss.backward()
+    optimizer.step()
+    return loss.data[0]/inp.shape[1]
+ 
 
 if __name__=="__main__":
     dataset=Dataset(storage["raw_data"],storage["word_dict"])
@@ -112,36 +105,27 @@ if __name__=="__main__":
     del storage
     data=dataset.get_dataset()
     loss_fn=N.CrossEntropyLoss()
-    seed=data[0][3:300]
+    seed=data[300:500]
+    model=LSTMWriter(vocab_size,1)
+    optimizer=O.Adam(model.parameters(),lr=0.001)
 
-    model=LSTMWriter(vocab_size,2)
-    optimizer=O.Adam(model.parameters(),lr=0.1)
-
+    generate_text(seed,model,rev_dict)
     for i in range(20):
-        hidden=model.init_hidden(1000)
-        batch_generator=get_batches(data[:,:10000])
-        total_loss=0
-        b=1
-        while b:
-            model.zero_grad()
+        batch_generator=get_batches(data)
+        b=0
+        while 1:
+            total_loss=0
             try:
                 _X,_y=next(batch_generator)
             except:
                 break
-            train=A.Variable(torch.from_numpy(_X))
-            targets=A.Variable(torch.from_numpy(_y).contiguous().view(-1))
-            out,hidden=model.forward(train,A.Variable(hidden.data))
-            loss=loss_fn(out.contiguous().view(-1,vocab_size),targets)
-            loss.backward()
-            optimizer.step()
-            total_loss+=loss.data[0]
-            #del data
-            #del train
-            #del targets
-            #generate_text(seed,model)
-            if b % 100 ==0:
-                logging.info("Epoch :{} Batches :{} Loss :{}".format(i,b,total_loss))
-                total_loss=0
+            loss=train_on_sequence(model,_X,_y)
+            total_loss+=loss
             b+=1
+            if b % 100 ==0:
+                logging.info("Epoch :{} Batches:{} Loss :{}".format(i,b,total_loss))
+                generate_text(seed,model,rev_dict)
     del data
-    generate_text(seed,model)
+    #torch.save(model.state_dict(),"model_10_ep.pt")
+    #print("Model saved")
+    generate_text(seed,model,rev_dict)

@@ -44,7 +44,7 @@ class Vocab(object):
 
 DATA_DIR="/home/adityas/nltk_data/corpora/state_union/"
 
-files=os.listdir(DATA_DIR)
+files=os.listdir(DATA_DIR)[:1]
 logger.info("Data files are {}".format(", ".join(files)))
 files=map(lambda x:DATA_DIR+x,files)
 
