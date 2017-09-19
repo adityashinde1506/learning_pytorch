@@ -64,12 +64,7 @@ class LSTMWriter(N.Module):
         recurrent=embedding
         recurrent,hidden=self.lstm(recurrent.view(1,1,-1),hidden)
         flat=recurrent
-        #flat=self.relu(flat)
         flat=self.linear(flat.view(1,-1))
-        #flat=self.softmax(flat.view(1,-1))
-        #flattened=recurrent[:,-1]
-        #flat=self.linear(flattened)
-        #print(flat.sum())
         return flat,hidden
 
 def get_batches(data):
@@ -91,7 +86,7 @@ def train_on_sequence(model,inp,target):
         train=A.Variable(torch.from_numpy(inp[:,i]))
         targets=A.Variable(torch.from_numpy(target[:,i]).contiguous().view(-1))
         out,hidden=model.forward(train,A.Variable(hidden.data))
-        loss+=loss_fn(out,targets)
+        loss=loss_fn(out,targets)
     loss.backward()
     optimizer.step()
     return loss.data[0]/inp.shape[1]
