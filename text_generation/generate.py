@@ -10,10 +10,8 @@ import sys
 
 from rnn_model import *
 
-storage=shelve.open("data.bin")
 
 def generate_text(X,model,rev_dict):
-    fp=open("generated_text","a")
     print("Priming the network.")
     hidden=model.init_hidden(1)
     i =0
@@ -24,17 +22,18 @@ def generate_text(X,model,rev_dict):
         i+=1
     #gen_str="".join(list(map(lambda x:rev_dict[int(x)],X.squeeze())))
     print("Network primed")
-    input_=numpy.array([X[-1]])
-    gen_str=""+rev_dict[X[-1]]
-    for i in range(1000):
+    input_=X
+    gen_str=""+"".join(map(lambda x:rev_dict[x],X.squeeze()))
+    for i in range(5000):
+#        print(input_)
         out,hidden=model.forward(A.Variable(torch.from_numpy(input_)),hidden)
-        out_=out.data.view(-1).div(0.6).exp()
+#        print(out)
+        out_=out.data[-1,:].div(0.8).exp()
         char=torch.multinomial(out_,1)[0]
+#        print(char)
         gen_str+=rev_dict[char]
-        input_=numpy.array([char])
+        input_=numpy.array([numpy.append(input_[0][1:],char)])
     print(gen_str)
-    fp.flush()
-    fp.close()
 
 if __name__=="__main__":
     dataset=Dataset(storage["raw_data"],storage["word_dict"])
